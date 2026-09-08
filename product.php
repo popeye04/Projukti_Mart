@@ -30,12 +30,15 @@ if (isset($_POST['add_to_cart'])) {
         exit();
     }
 
-    $quantity = max(1, intval($_POST['quantity']));
-
-    if ($quantity > $product['stock_qty']) {
-        $cart_message = "Sorry, only {$product['stock_qty']} left in stock.";
+    if ($_SESSION['role'] === 'admin') {
+        $cart_message = "Admin accounts cannot add products to a cart.";
     } else {
-        $user_id = intval($_SESSION['user_id']);
+        $quantity = max(1, intval($_POST['quantity']));
+
+        if ($quantity > $product['stock_qty']) {
+            $cart_message = "Sorry, only {$product['stock_qty']} left in stock.";
+        } else {
+            $user_id = intval($_SESSION['user_id']);
 
         // Every customer has at most one cart row — find it, or create it
         $cart_stmt = $conn->prepare("SELECT cart_id FROM cart WHERE user_id = ?");
@@ -69,7 +72,8 @@ if (isset($_POST['add_to_cart'])) {
             $insert_item->execute();
         }
 
-        $cart_message = "Added to cart!";
+            $cart_message = "Added to cart!";
+        }
     }
 }
 
@@ -181,9 +185,13 @@ if (isset($_SESSION['user_id'])) {
 <div class="product-detail">
     <div class="product-gallery">
         <?php if ($images->num_rows === 0): ?>
-            <img src="https://placehold.co/500x500?text=<?php echo urlencode($product['name']); ?>" alt="<?php echo htmlspecialchars($product['name']); ?>">
+            <?php $image_url = get_product_image_url('', $product['name']); ?>
+            <img src="<?php echo htmlspecialchars($image_url ?: 'https://placehold.co/500x500?text=' . urlencode($product['name'])); ?>" alt="<?php echo htmlspecialchars($product['name']); ?>">
         <?php else: while ($img = $images->fetch_assoc()): ?>
-            <img src="<?php echo htmlspecialchars($img['image_url']); ?>" alt="<?php echo htmlspecialchars($product['name']); ?>">
+            <?php
+            $image_url = get_product_image_url($img['image_url'], $product['name']);
+            ?>
+            <img src="<?php echo htmlspecialchars($image_url ?: 'https://placehold.co/500x500?text=' . urlencode($product['name'])); ?>" alt="<?php echo htmlspecialchars($product['name']); ?>">
         <?php endwhile; endif; ?>
     </div>
 
@@ -202,7 +210,7 @@ if (isset($_SESSION['user_id'])) {
 
         <p class="price">৳<?php echo number_format($product['price'], 2); ?></p>
 
-        <?php if ($product['stock_qty'] > 0): ?>
+       <?php if ($product['stock_qty'] > 0): ?>
             <p class="stock-badge in">In Stock (<?php echo $product['stock_qty']; ?> available)</p>
         <?php else: ?>
             <p class="stock-badge out">Out of Stock</p>
