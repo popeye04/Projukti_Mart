@@ -7,6 +7,11 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if ($_SESSION['role'] === 'admin') {
+    header("Location: admin/dashboard.php");
+    exit();
+}
+
 $user_id = intval($_SESSION['user_id']);
 
 // Handle quantity updates
