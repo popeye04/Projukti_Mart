@@ -22,8 +22,44 @@ if (isset($_POST['update_status'])) {
         $current_order = $current_stmt->get_result()->fetch_assoc();
 
         if ($current_order) {
-            // Restock automatically if this transition is INTO cancelled
-            if ($new_status === 'cancelled' && $current_order['status'] !== 'cancelled') {
+            if ($current_order['status'] === 'pending' && !in_array($new_status, ['processing', 'cancelled'], true)) {
+                $message = "A pending order must be approved first by setting it to Processing.";
+                $current_order = null;
+            }
+        }
+
+        if ($current_order) {
+            $status_changed = $current_order['status'] !== $new_status;
+            $approval_failed = false;
+
+            // Stock is reduced only when the order is delivered.
+            if ($new_status === 'delivered' && in_array($current_order['status'], ['processing', 'shipped'], true)) {
+                $conn->begin_transaction();
+                $items_stmt = $conn->prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?");
+                $items_stmt->bind_param("i", $order_id);
+                $items_stmt->execute();
+                $items_result = $items_stmt->get_result();
+                while ($item = $items_result->fetch_assoc()) {
+                    $stock_stmt = $conn->prepare(
+                        "UPDATE products SET stock_qty = stock_qty - ? WHERE product_id = ? AND stock_qty >= ?"
+                    );
+                    $stock_stmt->bind_param("iii", $item['quantity'], $item['product_id'], $item['quantity']);
+                    $stock_stmt->execute();
+                    if ($stock_stmt->affected_rows !== 1) {
+                        $conn->rollback();
+                        $message = "Order #$order_id cannot be marked delivered because an item is out of stock.";
+                        $approval_failed = true;
+                        break;
+                    }
+                }
+                if (!$approval_failed) {
+                    $update_stmt = $conn->prepare("UPDATE orders SET status = ? WHERE order_id = ?");
+                    $update_stmt->bind_param("si", $new_status, $order_id);
+                    $update_stmt->execute();
+                    $conn->commit();
+                }
+            // Restock only an order that was delivered and had stock deducted.
+            } elseif ($new_status === 'cancelled' && $current_order['status'] === 'delivered') {
                 $conn->begin_transaction();
                 $items_stmt = $conn->prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?");
                 $items_stmt->bind_param("i", $order_id);
@@ -43,7 +79,27 @@ if (isset($_POST['update_status'])) {
                 $stmt->bind_param("si", $new_status, $order_id);
                 $stmt->execute();
             }
-            $message = "Order #$order_id updated to " . ucfirst($new_status) . ".";
+            if ($status_changed && !$approval_failed) {
+                $customer_stmt = $conn->prepare("SELECT user_id FROM orders WHERE order_id = ?");
+                $customer_stmt->bind_param("i", $order_id);
+                $customer_stmt->execute();
+                $customer_id = $customer_stmt->get_result()->fetch_assoc()['user_id'];
+                if ($new_status === 'processing') {
+                    $notification_text = "Order #$order_id has been approved and is now processing.";
+                } elseif ($new_status === 'delivered') {
+                    $notification_text = "Order #$order_id has been delivered.";
+                } else {
+                    $notification_text = "Order #$order_id is now " . ucfirst($new_status) . ".";
+                }
+                $notification_stmt = $conn->prepare(
+                    "INSERT INTO notifications (user_id, order_id, message) VALUES (?, ?, ?)"
+                );
+                $notification_stmt->bind_param("iis", $customer_id, $order_id, $notification_text);
+                $notification_stmt->execute();
+            }
+            if (!$approval_failed) {
+                $message = "Order #$order_id updated to " . ucfirst($new_status) . ".";
+            }
         }
     }
 }
