@@ -13,7 +13,8 @@ $redirect = isset($_GET['redirect']) ? $_GET['redirect'] : (isset($_POST['redire
 if (isset($_POST['register'])) {
     $username = trim($_POST['username']);
     $full_name = trim($_POST['full_name']);
-    $email = trim($_POST['email']);
+    $email_local = trim($_POST['email_local'] ?? '');
+    $email = $email_local . '@gmail.com';
     $phone = trim($_POST['phone']);
     $password = $_POST['password'];
     $confirm = $_POST['confirm_password'];
@@ -21,6 +22,8 @@ if (isset($_POST['register'])) {
 
     if ($username === '' || $email === '' || $password === '') {
         $error = "Username, email, and password are required.";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/@gmail\.com$/i', $email)) {
+        $error = "Seller and customer accounts must use a valid @gmail.com email address.";
     } elseif ($password !== $confirm) {
         $error = "Passwords do not match.";
     } elseif (strlen($password) < 6) {
@@ -76,8 +79,11 @@ include 'includes/header.php';
                 <input type="text" id="full_name" name="full_name" value="<?php echo isset($_POST['full_name']) ? htmlspecialchars($_POST['full_name']) : ''; ?>">
             </div>
             <div class="filter-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>" required>
+                <label for="email_local">Gmail Address</label>
+                <div class="email-input">
+                    <input type="text" id="email_local" name="email_local" pattern="[A-Za-z0-9._%+-]+" title="Enter the part before @gmail.com" value="<?php echo htmlspecialchars($_POST['email_local'] ?? ''); ?>" required>
+                    <span>@gmail.com</span>
+                </div>
             </div>
             <div class="filter-group">
                 <label for="phone">Phone</label>
