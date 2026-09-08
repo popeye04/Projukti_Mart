@@ -78,12 +78,18 @@ while ($row = $items->fetch_assoc()) {
 }
 ?>
 
-<h1>My Cart</h1>
+<div class="page-heading">
+    <p class="page-eyebrow">Your next upgrade</p>
+    <h1>My Cart</h1>
+    <p class="page-intro">A few good choices. One great setup.</p>
+</div>
 
 <?php if (empty($cart_rows)): ?>
     <p class="empty-state">Your cart is empty. <a href="index.php">Continue shopping</a>.</p>
 <?php else: ?>
 
+<div class="cart-layout">
+<div class="cart-content">
 <form method="POST" class="cart-table-form">
     <table class="cart-table">
         <thead>
@@ -125,10 +131,15 @@ while ($row = $items->fetch_assoc()) {
         <button type="submit" name="update_cart" class="btn-filter">Update Cart</button>
     </div>
 </form>
+</div>
 
 <div class="cart-summary">
+    <p class="page-eyebrow">The details</p>
+    <h2>Order summary</h2>
     <p>Subtotal <span>৳<?php echo number_format($subtotal, 2); ?></span></p>
     <a href="checkout.php" class="btn-hero">Proceed to Checkout</a>
+    <p class="muted">Shipping calculated at checkout.</p>
+</div>
 </div>
 
 <?php endif; ?>
