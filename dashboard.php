@@ -48,7 +48,7 @@ include '../includes/header.php';
     </div>
 </div>
 
-<div class="dashboard-links">
+<div class="dashboard-links dashboard-primary-links">
     <a class="dashboard-link" href="manage_categories.php">
         <h3>Manage Categories</h3>
         <p>Create, edit, or remove categories and subcategories.</p>
@@ -60,6 +60,10 @@ include '../includes/header.php';
     <a class="dashboard-link" href="manage_orders.php">
         <h3>Platform Orders</h3>
         <p>View all orders across the marketplace.</p>
+    </a>
+    <a class="dashboard-link" href="../seller/manage_products.php">
+        <h3>Manage Products</h3>
+        <p>Add, edit, remove, and update marketplace products.</p>
     </a>
     <a class="dashboard-link" href="moderate_reviews.php">
         <h3>Moderate Reviews</h3>
