@@ -106,12 +106,13 @@ $stmt->execute();
 $products = $stmt->get_result();
 ?>
 
-<nav class="breadcrumb">
+<nav class="breadcrumb" aria-label="Breadcrumb">
     <a href="index.php">Home</a> / <span><?php echo htmlspecialchars($category['category_name']); ?></span>
 </nav>
 
 <div class="category-layout">
-    <aside class="filters">
+    <aside class="filters catalog-filters" aria-label="Product filters">
+        <span class="eyebrow">Make it yours</span>
         <?php if ($subcategories->num_rows > 0): ?>
         <div class="filter-group">
             <label>Subcategory</label>
@@ -123,7 +124,7 @@ $products = $stmt->get_result();
         </div>
         <?php endif; ?>
 
-        <h3>Filters</h3>
+        <h3>Refine your search</h3>
         <form method="GET" action="category.php">
             <input type="hidden" name="category_id" value="<?php echo $category_id; ?>">
 
@@ -164,7 +165,8 @@ $products = $stmt->get_result();
 
     <section class="results">
         <div class="results-header">
-            <h1><?php echo htmlspecialchars($category['category_name']); ?></h1>
+            <div><span class="eyebrow">The collection</span><h1><?php echo htmlspecialchars($category['category_name']); ?></h1></div>
+            <p class="muted">Find the right fit for your everyday.</p>
         </div>
 
         <?php if ($products->num_rows === 0): ?>
