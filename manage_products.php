@@ -2,22 +2,109 @@
 session_start();
 require '../db.php';
 
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'seller') {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['seller', 'admin'])) {
     header("Location: ../login.php");
     exit();
 }
 
 $seller_id = intval($_SESSION['user_id']);
-$message = '';
+$is_admin = $_SESSION['role'] === 'admin';
+$message = isset($_GET['updated']) ? 'Product updated.' : '';
+
+function save_product_images($conn, $product_id, $image_urls, $uploaded_files)
+{
+    $image_index = 0;
+    $upload_directory = dirname(__DIR__) . '/uploads/products';
+    $allowed_types = [
+        'image/jpeg' => 'jpg',
+        'image/png'  => 'png',
+        'image/gif'  => 'gif',
+        'image/webp' => 'webp'
+    ];
+
+    // 1. Ensure directory exists with write permissions
+    if (!is_dir($upload_directory)) {
+        if (!mkdir($upload_directory, 0777, true)) {
+            return 'Failed to create upload directory: ' . $upload_directory;
+        }
+    }
+
+    if (!is_writable($upload_directory)) {
+        return 'The upload folder is not writable: ' . $upload_directory;
+    }
+
+    // 2. Fallback for manual image URLs if no file is uploaded
+    $has_upload = isset($uploaded_files['error']) && is_array($uploaded_files['error'])
+        && in_array(UPLOAD_ERR_OK, $uploaded_files['error'], true);
+
+    if (!$has_upload && !empty($image_urls)) {
+        foreach ($image_urls as $image_url) {
+            $image_url = trim($image_url);
+            if ($image_url !== '') {
+                $is_primary = ($image_index === 0) ? 1 : 0;
+                $image_stmt = $conn->prepare("INSERT INTO product_images (product_id, image_url, is_primary) VALUES (?, ?, ?)");
+                $image_stmt->bind_param("isi", $product_id, $image_url, $is_primary);
+                $image_stmt->execute();
+                $image_index++;
+            }
+        }
+    }
+
+    if (!isset($uploaded_files['error']) || !is_array($uploaded_files['error'])) {
+        return '';
+    }
+
+    // 3. Process each uploaded file
+    foreach ($uploaded_files['error'] as $file_index => $upload_error) {
+        if ($upload_error === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+
+        if ($upload_error !== UPLOAD_ERR_OK) {
+            if ($upload_error === UPLOAD_ERR_INI_SIZE || $upload_error === UPLOAD_ERR_FORM_SIZE) {
+                return 'Image is too large. Upload an image under 2MB, or increase upload_max_filesize in php.ini.';
+            }
+            return 'Image upload failed with error code ' . $upload_error . '.';
+        }
+
+        if ($uploaded_files['size'][$file_index] > 5 * 1024 * 1024) {
+            return 'Each image must be 5 MB or smaller.';
+        }
+
+        $temporary_path = $uploaded_files['tmp_name'][$file_index];
+        $image_info = @getimagesize($temporary_path);
+        $mime_type = $image_info['mime'] ?? '';
+        if (!$image_info || !isset($allowed_types[$mime_type])) {
+            return 'Only JPG, PNG, GIF, and WebP image files are allowed.';
+        }
+
+        $filename = bin2hex(random_bytes(16)) . '.' . $allowed_types[$mime_type];
+        $destination = $upload_directory . '/' . $filename;
+
+        if (move_uploaded_file($temporary_path, $destination)) {
+            $image_url = 'uploads/products/' . $filename;
+            $is_primary = ($image_index === 0) ? 1 : 0;
+            $image_stmt = $conn->prepare("INSERT INTO product_images (product_id, image_url, is_primary) VALUES (?, ?, ?)");
+            $image_stmt->bind_param("isi", $product_id, $image_url, $is_primary);
+            if (!$image_stmt->execute()) {
+                return 'Image database save failed: ' . $image_stmt->error;
+            }
+            $image_index++;
+        } else {
+            return 'Could not move the uploaded file into: ' . $upload_directory;
+        }
+    }
+
+    return '';
+}
 
 // A product must belong to a leaf category (one with no subcategories of its own)
 $leaf_categories_sql = "SELECT c.category_id, c.category_name FROM categories c
                          WHERE NOT EXISTS (SELECT 1 FROM categories sub WHERE sub.parent_category_id = c.category_id)
-                         AND c.is_active = 1
                          ORDER BY c.category_name";
-
 // Handle Add Product
-if (isset($_POST['add_product'])) {
+if (isset($_POST['form_action']) && $_POST['form_action'] === 'add_product') {
+    $product_seller_id = $seller_id;
     $name = trim($_POST['name']);
     $category_id = intval($_POST['category_id']);
     $brand = trim($_POST['brand']);
@@ -30,11 +117,14 @@ if (isset($_POST['add_product'])) {
         "INSERT INTO products (category_id, seller_id, name, brand, model, description, price, stock_qty, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')"
     );
-    $insert_stmt->bind_param("iissssdi", $category_id, $seller_id, $name, $brand, $model, $description, $price, $stock_qty);
-    $insert_stmt->execute();
+    $insert_stmt->bind_param("iissssdi", $category_id, $product_seller_id, $name, $brand, $model, $description, $price, $stock_qty);
+    if (!$insert_stmt->execute()) {
+        $message = "Product could not be added: " . $insert_stmt->error;
+    }
     $new_product_id = $insert_stmt->insert_id;
 
-    foreach ($_POST['spec_key'] as $i => $key) {
+    
+foreach ($_POST['spec_key'] ?? [] as $i => $key) {
         $key = trim($key);
         $value = trim($_POST['spec_value'][$i]);
         if ($key !== '' && $value !== '') {
@@ -44,25 +134,29 @@ if (isset($_POST['add_product'])) {
         }
     }
 
-    foreach ($_POST['image_url'] as $i => $url) {
-        $url = trim($url);
-        if ($url !== '') {
-            $is_primary = ($i === 0) ? 1 : 0;
-            $img_stmt = $conn->prepare("INSERT INTO product_images (product_id, image_url, is_primary) VALUES (?, ?, ?)");
-            $img_stmt->bind_param("isi", $new_product_id, $url, $is_primary);
-            $img_stmt->execute();
-        }
+    $image_error = save_product_images($conn, $new_product_id, [], $_FILES['image_file'] ?? []);
+    if ($image_error !== '') {
+        $message = $image_error;
     }
 
-    $message = "Product added.";
+    if ($insert_stmt->errno === 0 && $message === '') {
+        header("Location: manage_products.php?updated=1");
+        exit();
+    }
 }
 
 // Handle Edit Product
-if (isset($_POST['edit_product'])) {
+if (isset($_POST['form_action']) && $_POST['form_action'] === 'edit_product') {
     $product_id = intval($_POST['product_id']);
 
-    $own_check = $conn->prepare("SELECT product_id FROM products WHERE product_id = ? AND seller_id = ?");
-    $own_check->bind_param("ii", $product_id, $seller_id);
+    $own_check = $is_admin
+        ? $conn->prepare("SELECT product_id FROM products WHERE product_id = ?")
+        : $conn->prepare("SELECT product_id FROM products WHERE product_id = ? AND seller_id = ?");
+    if (!$is_admin) {
+        $own_check->bind_param("ii", $product_id, $seller_id);
+    } else {
+        $own_check->bind_param("i", $product_id);
+    }
     $own_check->execute();
 
     if ($own_check->get_result()->num_rows > 0) {
@@ -77,34 +171,55 @@ if (isset($_POST['edit_product'])) {
         $update_stmt = $conn->prepare(
             "UPDATE products SET category_id=?, name=?, brand=?, model=?, description=?, price=?, stock_qty=? WHERE product_id=?"
         );
-        $update_stmt->bind_param("issssdii", $category_id, $name, $brand, $model, $description, $price, $stock_qty, $product_id);
-        $update_stmt->execute();
-
-        // Simplest correct approach: replace specs/images entirely with the resubmitted set
-        $conn->query("DELETE FROM product_specs WHERE product_id = $product_id");
-        $conn->query("DELETE FROM product_images WHERE product_id = $product_id");
-
-        foreach ($_POST['spec_key'] as $i => $key) {
-            $key = trim($key);
-            $value = trim($_POST['spec_value'][$i]);
-            if ($key !== '' && $value !== '') {
-                $spec_stmt = $conn->prepare("INSERT INTO product_specs (product_id, spec_key, spec_value) VALUES (?, ?, ?)");
-                $spec_stmt->bind_param("iss", $product_id, $key, $value);
-                $spec_stmt->execute();
+        if (!$update_stmt) {
+            $message = "Product update could not start: " . $conn->error;
+        } else {
+            $update_stmt->bind_param("issssdii", $category_id, $name, $brand, $model, $description, $price, $stock_qty, $product_id);
+            if (!$update_stmt->execute()) {
+                $message = "Product could not be updated: " . $update_stmt->error;
             }
         }
 
-        foreach ($_POST['image_url'] as $i => $url) {
-            $url = trim($url);
-            if ($url !== '') {
-                $is_primary = ($i === 0) ? 1 : 0;
-                $img_stmt = $conn->prepare("INSERT INTO product_images (product_id, image_url, is_primary) VALUES (?, ?, ?)");
-                $img_stmt->bind_param("isi", $product_id, $url, $is_primary);
-                $img_stmt->execute();
+        if ($message === '') {
+            $has_new_images = isset($_FILES['image_file']['error'])
+                && is_array($_FILES['image_file']['error'])
+                && in_array(UPLOAD_ERR_OK, $_FILES['image_file']['error'], true);
+
+            $conn->query("DELETE FROM product_specs WHERE product_id = $product_id");
+            if ($has_new_images) {
+                $conn->query("DELETE FROM product_images WHERE product_id = $product_id");
+            }
+
+            foreach ($_POST['spec_key'] ?? [] as $i => $key) {
+                $key = trim($key);
+                $value = trim($_POST['spec_value'][$i] ?? '');
+
+                if ($key !== '' && $value !== '') {
+                    $spec_stmt = $conn->prepare(
+                        "INSERT INTO product_specs (product_id, spec_key, spec_value) VALUES (?, ?, ?)"
+                    );
+                    $spec_stmt->bind_param("iss", $product_id, $key, $value);
+                    $spec_stmt->execute();
+                }
+            }
+
+            $image_error = save_product_images(
+                $conn,
+                $product_id,
+                [],
+                $_FILES['image_file'] ?? []
+            );
+            if ($image_error !== '') {
+                $message = $image_error;
+            }
+
+            if ($update_stmt->errno === 0 && $message === '') {
+                header("Location: manage_products.php?edit=$product_id&updated=1");
+                exit();
             }
         }
-
-        $message = "Product updated.";
+    } else {
+        $message = "You are not allowed to edit that product.";
     }
 }
 
@@ -112,8 +227,14 @@ if (isset($_POST['edit_product'])) {
 if (isset($_GET['toggle_status'])) {
     $product_id = intval($_GET['toggle_status']);
 
-    $own_check = $conn->prepare("SELECT status FROM products WHERE product_id = ? AND seller_id = ?");
-    $own_check->bind_param("ii", $product_id, $seller_id);
+    $own_check = $is_admin
+        ? $conn->prepare("SELECT status FROM products WHERE product_id = ?")
+        : $conn->prepare("SELECT status FROM products WHERE product_id = ? AND seller_id = ?");
+    if (!$is_admin) {
+        $own_check->bind_param("ii", $product_id, $seller_id);
+    } else {
+        $own_check->bind_param("i", $product_id);
+    }
     $own_check->execute();
     $product_row = $own_check->get_result()->fetch_assoc();
 
@@ -137,8 +258,14 @@ $editing_specs = [];
 $editing_images = [];
 if (isset($_GET['edit'])) {
     $edit_id = intval($_GET['edit']);
-    $edit_stmt = $conn->prepare("SELECT * FROM products WHERE product_id = ? AND seller_id = ?");
-    $edit_stmt->bind_param("ii", $edit_id, $seller_id);
+    $edit_stmt = $is_admin
+        ? $conn->prepare("SELECT * FROM products WHERE product_id = ?")
+        : $conn->prepare("SELECT * FROM products WHERE product_id = ? AND seller_id = ?");
+    if (!$is_admin) {
+        $edit_stmt->bind_param("ii", $edit_id, $seller_id);
+    } else {
+        $edit_stmt->bind_param("i", $edit_id);
+    }
     $edit_stmt->execute();
     $editing = $edit_stmt->get_result()->fetch_assoc();
 
@@ -158,22 +285,55 @@ if (isset($_GET['edit'])) {
 $products_stmt = $conn->prepare(
     "SELECT p.*, c.category_name FROM products p
      JOIN categories c ON p.category_id = c.category_id
-     WHERE p.seller_id = ?
+     " . ($is_admin ? "WHERE 1=1" : "WHERE p.seller_id = ?") . "
      ORDER BY p.created_at DESC"
 );
-$products_stmt->bind_param("i", $seller_id);
+if (!$is_admin) {
+    $products_stmt->bind_param("i", $seller_id);
+}
 $products_stmt->execute();
 $products = $products_stmt->get_result();
+$sellers = $is_admin ? $conn->query("SELECT user_id, username, full_name FROM users WHERE role = 'seller' AND status = 'active' ORDER BY username") : null;
+$seller_sales = null;
+if (!$is_admin) {
+    $seller_sales_stmt = $conn->prepare(
+        "SELECT COALESCE(SUM(oi.quantity), 0) AS units_sold,
+                COALESCE(SUM(oi.subtotal), 0) AS revenue,
+                COUNT(DISTINCT o.order_id) AS order_count
+         FROM order_items oi
+         JOIN products p ON oi.product_id = p.product_id
+         JOIN orders o ON oi.order_id = o.order_id
+         WHERE p.seller_id = ? AND o.status = 'delivered'"
+    );
+    $seller_sales_stmt->bind_param("i", $seller_id);
+    $seller_sales_stmt->execute();
+    $seller_sales = $seller_sales_stmt->get_result()->fetch_assoc();
+}
 ?>
 
 <h1>Manage Products</h1>
+<?php if (!$is_admin): ?>
+<div class="dashboard-stats">
+    <div class="stat-card"><span class="stat-value"><?php echo $products->num_rows; ?></span><span class="stat-label">Your Products</span></div>
+    <div class="stat-card"><span class="stat-value"><?php echo $seller_sales['units_sold']; ?></span><span class="stat-label">Delivered Units</span></div>
+    <div class="stat-card"><span class="stat-value">৳<?php echo number_format($seller_sales['revenue'], 2); ?></span><span class="stat-label">Your Revenue</span></div>
+    <div class="stat-card"><span class="stat-value"><?php echo $seller_sales['order_count']; ?></span><span class="stat-label">Delivered Orders</span></div>
+</div>
+<div class="dashboard-links dashboard-primary-links">
+    <a class="dashboard-link" href="seller_orders.php"><h3>Seller Orders</h3><p>View orders containing your products.</p></a>
+    <a class="dashboard-link" href="sales_summary.php"><h3>Sales Summary</h3><p>Review your delivered sales.</p></a>
+</div>
+<?php endif; ?>
 <?php if ($message): ?><p class="cart-message"><?php echo htmlspecialchars($message); ?></p><?php endif; ?>
 
 <section class="seller-form-card">
     <h2><?php echo $editing ? 'Edit Product' : 'Add New Product'; ?></h2>
-    <form method="POST">
+    <form method="POST" enctype="multipart/form-data">
         <?php if ($editing): ?>
             <input type="hidden" name="product_id" value="<?php echo $editing['product_id']; ?>">
+            <input type="hidden" name="form_action" value="edit_product">
+        <?php else: ?>
+            <input type="hidden" name="form_action" value="add_product">
         <?php endif; ?>
 
         <div class="form-grid">
@@ -218,32 +378,39 @@ $products = $products_stmt->get_result();
         </div>
 
         <fieldset class="spec-fieldset">
-            <legend>Specifications</legend>
-            <?php for ($i = 0; $i < 5; $i++):
+            <legend>Additional Descriptions</legend>
+            <div id="description-rows">
+            <?php $description_count = max(1, count($editing_specs)); for ($i = 0; $i < $description_count; $i++):
                 $spec_key = $editing_specs[$i]['spec_key'] ?? '';
                 $spec_value = $editing_specs[$i]['spec_value'] ?? '';
             ?>
-            <div class="spec-row">
-                <input type="text" name="spec_key[]" placeholder="e.g. RAM" value="<?php echo htmlspecialchars($spec_key); ?>">
-                <input type="text" name="spec_value[]" placeholder="e.g. 8GB" value="<?php echo htmlspecialchars($spec_value); ?>">
+            <div class="spec-row description-row">
+                <input type="text" name="spec_key[]" placeholder="Description title" value="<?php echo htmlspecialchars($spec_key); ?>">
+                <textarea name="spec_value[]" rows="2" placeholder="Write the description here..."><?php echo htmlspecialchars($spec_value); ?></textarea>
             </div>
             <?php endfor; ?>
+            </div>
+            <button type="button" class="btn-filter add-description" id="add-description">Add More</button>
         </fieldset>
 
         <fieldset class="spec-fieldset">
-            <legend>Image URLs</legend>
+            <legend>Product Images</legend>
             <?php for ($i = 0; $i < 3; $i++):
                 $img_url = $editing_images[$i]['image_url'] ?? '';
             ?>
             <div class="filter-group">
-                <input type="text" name="image_url[]" placeholder="https://..." value="<?php echo htmlspecialchars($img_url); ?>">
+                <label for="image_file_<?php echo $i; ?>">Choose image <?php echo $i + 1; ?></label>
+                <input type="file" id="image_file_<?php echo $i; ?>" name="image_file[]" accept="image/jpeg,image/png,image/gif,image/webp">
+                <?php if ($img_url): ?>
+                    <span class="muted">Current file: <?php echo htmlspecialchars(basename($img_url)); ?></span>
+                <?php endif; ?>
             </div>
             <?php endfor; ?>
-            <p class="muted">Tip: use a placeholder image service like placehold.co while testing.</p>
+            <p class="muted">Select images from your computer. Each image must be 5 MB or smaller.</p>
         </fieldset>
 
-        <button type="submit" name="<?php echo $editing ? 'edit_product' : 'add_product'; ?>" class="btn-filter">
-            <?php echo $editing ? 'Update Product' : 'Add Product'; ?>
+        <button type="submit" class="btn-filter">
+            Save Product
         </button>
         <?php if ($editing): ?><a href="manage_products.php" class="btn-cancel-edit">Cancel Edit</a><?php endif; ?>
     </form>
@@ -269,7 +436,9 @@ $products = $products_stmt->get_result();
                 <td class="table-actions">
                     <a href="manage_products.php?edit=<?php echo $p['product_id']; ?>">Edit</a>
                     <a href="manage_products.php?toggle_status=<?php echo $p['product_id']; ?>">
-                        <?php echo $p['status'] === 'active' ? 'Deactivate' : 'Activate'; ?>
+                        <?php echo $p['status'] === 'active'
+                            ? ($is_admin ? 'Remove from Store' : 'Deactivate')
+                            : 'Activate'; ?>
                     </a>
                 </td>
             </tr>
@@ -280,3 +449,14 @@ $products = $products_stmt->get_result();
 </section>
 
 <?php include '../includes/footer.php'; ?>
+
+<script>
+    document.getElementById('add-description')?.addEventListener('click', function () {
+        const rows = document.getElementById('description-rows');
+        const row = document.createElement('div');
+        row.className = 'spec-row description-row';
+        row.innerHTML = '<input type="text" name="spec_key[]" placeholder="Description title">' +
+            '<textarea name="spec_value[]" rows="2" placeholder="Write the description here..."></textarea>';
+        rows.appendChild(row);
+    });
+</script>
