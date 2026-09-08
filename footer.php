@@ -35,22 +35,30 @@
     <p class="footer-note">&copy; <?php echo date('Y'); ?> Projukti Mart — CSE327 demo project.</p>
 </footer>
 
-<!-- Chatbot widget: open/close toggle only for now. The actual AI request logic
-     will be wired up in chatbot.js once ai_search.php exists. -->
-<button id="chatbotToggle" class="chatbot-toggle" aria-label="Open chat assistant">💬</button>
+<!-- Visibility listeners stay here; chatbot.js owns only message submission. -->
+<button id="chatbotToggle" class="chatbot-toggle" aria-label="Open chat assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-10a9 9 0 0 1 18 0Z"/><path d="m12 6 1.2 3.3 3.3 1.2-3.3 1.2L12 15l-1.2-3.3-3.3-1.2 3.3-1.2L12 6Z"/></svg><span>Ask Projukti</span></button>
 
 <div id="chatbotPanel" class="chatbot-panel" hidden>
     <div class="chatbot-header">
-        <span>Ask Projukti Assistant</span>
+        <div class="chatbot-heading"><span>Projukti Assistant</span><small class="chatbot-online">Your next upgrade starts here</small></div>
         <button id="chatbotClose" aria-label="Close chat">&times;</button>
     </div>
-    <div class="chatbot-messages">
+    <div class="chatbot-messages" id="chatbotMessages" role="log" aria-live="polite" aria-label="Assistant messages">
         <p class="bot-msg">Hi! Tell me what you're looking for — e.g. "a lightweight laptop for coding under 70k".</p>
     </div>
     <form class="chatbot-input" id="chatbotForm">
-        <input type="text" name="message" placeholder="Type your question..." autocomplete="off" required>
-        <button type="submit">Send</button>
+        <input id="chatbotInput" type="text" name="message" maxlength="255" aria-label="Ask the assistant" placeholder="Type your question..." autocomplete="off" dir="auto" required>
+        <button id="chatbotMic" type="button" aria-label="Start voice input" aria-pressed="false" title="Speak your message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1m-7 8v4m-4 0h8"/></svg></button>
+        <button id="chatbotSend" type="submit">Send</button>
     </form>
+    <div class="chatbot-input chatbot-voice">
+        <label for="chatbotVoiceLanguage">Voice language</label>
+        <select id="chatbotVoiceLanguage" aria-label="Voice recognition language">
+            <option value="bn-BD">বাংলা</option>
+            <option value="en-US">English</option>
+        </select>
+    </div>
+    <p id="chatbotVoiceStatus" class="muted" role="status" aria-live="polite"></p>
 </div>
 
 <script>
@@ -61,13 +69,15 @@
     chatbotToggle.addEventListener('click', () => {
         chatbotPanel.hidden = false;
         chatbotToggle.hidden = true;
+        document.getElementById('chatbotInput').focus();
     });
     chatbotClose.addEventListener('click', () => {
         chatbotPanel.hidden = true;
         chatbotToggle.hidden = false;
+        chatbotToggle.focus();
     });
-    // chatbotForm submit handler (fetch call to ai_search.php) added once that file exists.
 </script>
+<script src="/projukti_mart/assets/js/chatbot.js" defer></script>
 
 </body>
 </html>
