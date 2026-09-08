@@ -33,16 +33,42 @@ if ($is_seller) {
 }
 ?>
 
+<?php if (isset($_SESSION['store_error'])): ?>
+<p class="stock-warning-box"><?php echo htmlspecialchars($_SESSION['store_error']); ?></p>
+<?php unset($_SESSION['store_error']); endif; ?>
+
 <section class="hero">
     <div class="hero-text">
-        <h1>Tech that keeps up with you.</h1>
-        <p>Mobiles, PCs, and laptops — picked, priced, and ready to ship from Projukti Mart.</p>
-        <a href="#categories" class="btn-hero">Start Browsing</a>
+        <span class="eyebrow"><span class="status-dot" aria-hidden="true"></span> A little ahead of the everyday</span>
+        <h1>Make room for<br>what’s <span>next.</span></h1>
+        <p>From your next big idea to your everyday essentials. Discover mobiles, PCs, laptops, and the gear that makes it all happen.</p>
+        <div class="hero-actions">
+            <a href="#categories" class="btn-hero">Find your next upgrade <span aria-hidden="true">↗</span></a>
+            <a href="#categories" class="hero-secondary">Explore the collection <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="hero-meta"><span>Built for your world.</span><span>Priced in ৳. Made for Bangladesh.</span></div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+        <div class="visual-topline"><span>THE NEXT CHAPTER</span><span>PM / 01</span></div>
+        <div class="device-scene">
+            <div class="hero-orbit"></div>
+            <div class="device-glow"></div>
+            <div class="device-laptop">
+                <div class="device-screen">
+                    <div class="device-display"><span class="display-grid"></span><span class="display-orbit"></span><span class="display-mark display-word">P<span>m.</span></span><span class="display-caption">IDEAS. UNLIMITED.</span></div>
+                </div>
+                <div class="device-base"></div>
+            </div>
+        </div>
+        <div class="visual-caption"><span>Less ordinary.<br><strong>More possibility.</strong></span><span class="visual-cross">+</span></div>
     </div>
 </section>
 
 <section id="categories" class="category-tiles">
-    <h2>Shop by Category</h2>
+    <div class="section-heading">
+        <div><span class="eyebrow">Find your focus</span><h2>Good tech. Your way.</h2></div>
+        <span class="section-index">01 / THE COLLECTION</span>
+    </div>
     <div class="tile-grid">
         <?php if ($categories->num_rows === 0): ?>
             <p class="empty-state">Categories haven't been added yet.</p>
@@ -50,13 +76,16 @@ if ($is_seller) {
             <a class="category-tile" href="category.php?category_id=<?php echo $cat['category_id']; ?>">
                 <span class="tile-icon"><?php echo strtoupper(substr($cat['category_name'], 0, 1)); ?></span>
                 <span class="tile-name"><?php echo htmlspecialchars($cat['category_name']); ?></span>
+                <span class="tile-caption">Explore the collection</span>
+                <span class="tile-arrow" aria-hidden="true">↗</span>
             </a>
         <?php endwhile; endif; ?>
     </div>
 </section>
 
-<section class="trending">
-    <h2><?php echo $product_heading; ?></h2>
+<section class="recommendations">
+    <div class="section-heading"><div><span class="eyebrow">Worth a closer look</span><h2><?php echo htmlspecialchars($product_heading); ?></h2></div><span class="section-index">02 / DISCOVER MORE</span></div>
+
     <?php if ($trending->num_rows === 0): ?>
         <p class="empty-state"><?php echo $is_seller ? 'You have not added any active products yet.' : 'No products yet — the catalog is just getting started. Check back soon.'; ?></p>
     <?php else: ?>
@@ -71,7 +100,7 @@ if ($is_seller) {
                     alt="<?php echo htmlspecialchars($p['name']); ?>"
                 >
                 <h3><?php echo htmlspecialchars($p['name']); ?></h3>
-                <?php if ($p['brand']): ?>
+                <?php if (!empty($p['brand'])): ?>
                     <p class="muted"><?php echo htmlspecialchars($p['brand']); ?></p>
                 <?php endif; ?>
                 <p class="price">৳<?php echo number_format($p['price'], 2); ?></p>
