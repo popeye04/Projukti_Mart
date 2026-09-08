@@ -124,7 +124,10 @@ include 'includes/header.php';
 
 <div class="auth-wrapper">
     <div class="auth-card">
+        <p class="page-eyebrow">Back to your world</p>
         <h1><?php echo $show_forgot ? 'Reset Password' : 'Login'; ?></h1>
+        <p class="auth-caption"><?php echo $show_forgot ? 'Recover your account access.' : 'Your next upgrade is waiting. Welcome back.'; ?></p>
+        
         <?php if ($error): ?><p class="stock-warning-box"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
         <?php if ($success): ?><p class="cart-message"><?php echo htmlspecialchars($success); ?></p><?php endif; ?>
 
@@ -142,8 +145,8 @@ include 'includes/header.php';
             <button type="submit" name="login" class="btn-hero auth-submit">Login</button>
         </form>
         <p class="auth-switch"><a href="login.php?forgot=1">Forgot password?</a></p>
-
         <p class="auth-switch">Don't have an account? <a href="register.php">Register here</a></p>
+
         <?php else: ?>
             <?php if (!isset($_SESSION['recovery_user_id'])): ?>
             <form method="POST">
