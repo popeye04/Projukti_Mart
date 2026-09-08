@@ -3,219 +3,159 @@ session_start();
 require 'db.php';
 
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php?redirect=" . urlencode("checkout.php"));
-    exit();
+	header("Location: login.php?redirect=" . urlencode("checkout.php"));
+	exit();
+}
+
+if ($_SESSION['role'] === 'admin') {
+	header("Location: admin/dashboard.php");
+	exit();
 }
 
 $user_id = intval($_SESSION['user_id']);
-
-// Fetch cart items joined with live product data
-$items_stmt = $conn->prepare(
-    "SELECT ci.cart_item_id, ci.quantity, p.product_id, p.name, p.price, p.stock_qty
-     FROM cart_items ci
-     JOIN cart c ON ci.cart_id = c.cart_id
-     JOIN products p ON ci.product_id = p.product_id
-     WHERE c.user_id = ?"
-);
-$items_stmt->bind_param("i", $user_id);
-$items_stmt->execute();
-$cart_result = $items_stmt->get_result();
-
-$cart_rows = [];
-$subtotal = 0;
-while ($row = $cart_result->fetch_assoc()) {
-    $row['line_total'] = $row['price'] * $row['quantity'];
-    $subtotal += $row['line_total'];
-    $cart_rows[] = $row;
-}
-
-if (empty($cart_rows)) {
-    header("Location: cart.php");
-    exit();
-}
-
-// Fetch saved addresses
-$addr_stmt = $conn->prepare("SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, address_id DESC");
-$addr_stmt->bind_param("i", $user_id);
-$addr_stmt->execute();
-$addresses_result = $addr_stmt->get_result();
-$addresses = [];
-while ($a = $addresses_result->fetch_assoc()) {
-    $addresses[] = $a;
-}
-
-$shipping_fee = ($subtotal >= 5000) ? 0 : 60;
-$total = $subtotal + $shipping_fee;
-
 $error = '';
 $order_placed = false;
 $placed_order_id = null;
-$placed_total = 0;
 
-// ---- Handle order placement ----
+$user_stmt = $conn->prepare("SELECT full_name, phone FROM users WHERE user_id = ?");
+$user_stmt->bind_param("i", $user_id);
+$user_stmt->execute();
+$user = $user_stmt->get_result()->fetch_assoc();
+
+$cart_stmt = $conn->prepare(
+	"SELECT ci.cart_item_id, ci.quantity, p.product_id, p.name, p.price, p.stock_qty
+	 FROM cart_items ci
+	 JOIN cart c ON ci.cart_id = c.cart_id
+	 JOIN products p ON ci.product_id = p.product_id
+	 WHERE c.user_id = ? AND p.status = 'active'"
+);
+$cart_stmt->bind_param("i", $user_id);
+$cart_stmt->execute();
+$cart_result = $cart_stmt->get_result();
+$cart_rows = [];
+$subtotal = 0;
+while ($row = $cart_result->fetch_assoc()) {
+	$row['line_total'] = $row['price'] * $row['quantity'];
+	$subtotal += $row['line_total'];
+	$cart_rows[] = $row;
+}
+
+$addresses_stmt = $conn->prepare("SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, address_id DESC");
+$addresses_stmt->bind_param("i", $user_id);
+$addresses_stmt->execute();
+$addresses = $addresses_stmt->get_result();
+
 if (isset($_POST['place_order'])) {
-    if (empty($addresses)) {
-        $error = "Please add a shipping address before placing your order.";
-    } else {
-        $address_id = intval($_POST['address_id']);
+	$address_id = intval($_POST['address_id'] ?? 0);
 
-        $own_check = $conn->prepare("SELECT address_id FROM addresses WHERE address_id = ? AND user_id = ?");
-        $own_check->bind_param("ii", $address_id, $user_id);
-        $own_check->execute();
+	if (empty($cart_rows)) {
+		$error = "Your cart is empty.";
+	} elseif (trim($user['phone'] ?? '') === '') {
+		$error = "Please add your phone number in your profile before placing an order.";
+	} elseif ($address_id <= 0) {
+		$error = "Please select a shipping address.";
+	} else {
+		$address_check = $conn->prepare("SELECT address_id FROM addresses WHERE address_id = ? AND user_id = ?");
+		$address_check->bind_param("ii", $address_id, $user_id);
+		$address_check->execute();
 
-        if ($own_check->get_result()->num_rows === 0) {
-            $error = "Invalid shipping address selected.";
-        } else {
-            $conn->begin_transaction();
-            $stock_ok = true;
-            $order_subtotal = 0;
-            $locked_items = [];
+		if ($address_check->get_result()->num_rows === 0) {
+			$error = "Please select a valid shipping address.";
+		} else {
+			$conn->begin_transaction();
+			try {
+				// Stock is checked here but reserved/decreased only after admin approval.
+				foreach ($cart_rows as $item) {
+					if ($item['quantity'] > $item['stock_qty']) {
+						throw new Exception("Only {$item['stock_qty']} of {$item['name']} is currently available.");
+					}
+				}
 
-            foreach ($cart_rows as $item) {
-                // Lock the row so a simultaneous checkout by someone else can't
-                // both pass the stock check for the same last unit
-                $lock_stmt = $conn->prepare("SELECT stock_qty, price FROM products WHERE product_id = ? FOR UPDATE");
-                $lock_stmt->bind_param("i", $item['product_id']);
-                $lock_stmt->execute();
-                $live = $lock_stmt->get_result()->fetch_assoc();
+				$order_stmt = $conn->prepare(
+					"INSERT INTO orders (user_id, address_id, status, total_amount) VALUES (?, ?, 'pending', ?)"
+				);
+				$order_stmt->bind_param("iid", $user_id, $address_id, $subtotal);
+				if (!$order_stmt->execute()) {
+					throw new Exception("Could not create the order.");
+				}
+				$placed_order_id = $order_stmt->insert_id;
 
-                if (!$live || $live['stock_qty'] < $item['quantity']) {
-                    $stock_ok = false;
-                    $error = "Sorry, \"{$item['name']}\" no longer has enough stock. Please update your cart.";
-                    break;
-                }
+				$item_stmt = $conn->prepare(
+					"INSERT INTO order_items (order_id, product_id, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?)"
+				);
+				foreach ($cart_rows as $item) {
+					$item_subtotal = $item['price'] * $item['quantity'];
+					$item_stmt->bind_param("iiidd", $placed_order_id, $item['product_id'], $item['quantity'], $item['price'], $item_subtotal);
+					$item_stmt->execute();
+				}
 
-                $line_total = $live['price'] * $item['quantity'];
-                $order_subtotal += $line_total;
-                $locked_items[] = [
-                    'product_id' => $item['product_id'],
-                    'quantity'   => $item['quantity'],
-                    'unit_price' => $live['price'],
-                    'subtotal'   => $line_total
-                ];
-            }
-
-            if ($stock_ok) {
-                $order_shipping = ($order_subtotal >= 5000) ? 0 : 60;
-                $order_total = $order_subtotal + $order_shipping;
-
-                $order_stmt = $conn->prepare(
-                    "INSERT INTO orders (user_id, address_id, status, total_amount) VALUES (?, ?, 'pending', ?)"
-                );
-                $order_stmt->bind_param("iid", $user_id, $address_id, $order_total);
-                $order_stmt->execute();
-                $order_id = $order_stmt->insert_id;
-
-                foreach ($locked_items as $li) {
-                    $oi_stmt = $conn->prepare(
-                        "INSERT INTO order_items (order_id, product_id, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?)"
-                    );
-                    $oi_stmt->bind_param(
-                        "iiidd",
-                        $order_id,
-                        $li['product_id'],
-                        $li['quantity'],
-                        $li['unit_price'],
-                        $li['subtotal']
-                    );
-                    $oi_stmt->execute();
-
-                    $stock_stmt = $conn->prepare("UPDATE products SET stock_qty = stock_qty - ? WHERE product_id = ?");
-                    $stock_stmt->bind_param("ii", $li['quantity'], $li['product_id']);
-                    $stock_stmt->execute();
-                }
-
-                // Clear the cart now that it's been converted into an order
-                $conn->query("DELETE ci FROM cart_items ci JOIN cart c ON ci.cart_id = c.cart_id WHERE c.user_id = $user_id");
-
-                $conn->commit();
-                $order_placed = true;
-                $placed_order_id = $order_id;
-                $placed_total = $order_total;
-            } else {
-                $conn->rollback();
-            }
-        }
-    }
+				$clear_stmt = $conn->prepare(
+					"DELETE ci FROM cart_items ci JOIN cart c ON ci.cart_id = c.cart_id WHERE c.user_id = ?"
+				);
+				$clear_stmt->bind_param("i", $user_id);
+				$clear_stmt->execute();
+				$conn->commit();
+				$order_placed = true;
+			} catch (Throwable $exception) {
+				$conn->rollback();
+				$error = $exception->getMessage();
+			}
+		}
+	}
 }
 
 $page_title = 'Checkout';
 include 'includes/header.php';
-
-// Build the order-items table once, reused whether or not an address exists
-ob_start();
 ?>
-<h2>Order Items</h2>
-<table class="cart-table">
-    <thead>
-        <tr><th>Product</th><th>Qty</th><th>Price</th><th>Subtotal</th></tr>
-    </thead>
-    <tbody>
-        <?php foreach ($cart_rows as $row): ?>
-        <tr>
-            <td><?php echo htmlspecialchars($row['name']); ?></td>
-            <td><?php echo $row['quantity']; ?></td>
-            <td>৳<?php echo number_format($row['price'], 2); ?></td>
-            <td>৳<?php echo number_format($row['line_total'], 2); ?></td>
-        </tr>
-        <?php endforeach; ?>
-    </tbody>
-</table>
-<?php
-$order_items_html = ob_get_clean();
-?>
-
-<h1>Checkout</h1>
 
 <?php if ($order_placed): ?>
-    <div class="order-confirmation">
-        <h2>Order Placed!</h2>
-        <p>Thanks for your order — <strong>Order #<?php echo $placed_order_id; ?></strong> has been placed successfully.</p>
-        <p>Total charged: <strong>৳<?php echo number_format($placed_total, 2); ?></strong></p>
-        <a href="orders.php" class="btn-hero">View My Orders</a>
-    </div>
+	<h1>Order Placed</h1>
+	<p class="cart-message">Order #<?php echo $placed_order_id; ?> is pending admin approval. You will receive an update in My Orders.</p>
+	<a class="btn-hero" href="orders.php">View My Orders</a>
+<?php elseif (empty($cart_rows)): ?>
+	<h1>Checkout</h1>
+	<p class="empty-state">Your cart is empty. <a href="index.php">Continue shopping</a>.</p>
 <?php else: ?>
+	<h1>Checkout</h1>
+	<?php if ($error): ?><p class="stock-warning-box"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
 
-    <?php if ($error): ?><p class="stock-warning-box"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
+	<div class="checkout-layout">
+		<section class="checkout-card">
+			<h2>Shipping Details</h2>
+			<div class="filter-group">
+				<label>Phone Number</label>
+				<input type="text" value="<?php echo htmlspecialchars($user['phone'] ?? ''); ?>" readonly>
+				<?php if (empty($user['phone'])): ?><p class="muted">Add your phone number in <a href="profile.php">Profile</a>.</p><?php endif; ?>
+			</div>
 
-    <div class="checkout-layout">
-        <div class="checkout-main">
-            <section class="checkout-section">
-                <?php if (empty($addresses)): ?>
-                    <h2>Shipping Address</h2>
-                    <p class="empty-state">You don't have a saved address yet. <a href="profile.php">Add one here</a> before checking out.</p>
-                    <?php echo $order_items_html; ?>
-                <?php else: ?>
-                    <form method="POST">
-                        <h2>Shipping Address</h2>
-                        <div class="address-options">
-                            <?php foreach ($addresses as $addr): ?>
-                            <label class="address-option">
-                                <input type="radio" name="address_id" value="<?php echo $addr['address_id']; ?>" <?php echo $addr['is_default'] ? 'checked' : ''; ?>>
-                                <span>
-                                    <?php echo htmlspecialchars($addr['line1']); ?><?php echo $addr['line2'] ? ', ' . htmlspecialchars($addr['line2']) : ''; ?><br>
-                                    <?php echo htmlspecialchars($addr['city']); ?><?php echo $addr['postal_code'] ? ', ' . htmlspecialchars($addr['postal_code']) : ''; ?>, <?php echo htmlspecialchars($addr['country']); ?>
-                                </span>
-                            </label>
-                            <?php endforeach; ?>
-                        </div>
+			<form method="POST">
+				<div class="filter-group">
+					<label for="address_id">Shipping Address</label>
+					<select name="address_id" id="address_id" required>
+						<option value="">Select an address</option>
+						<?php while ($address = $addresses->fetch_assoc()): ?>
+							<option value="<?php echo $address['address_id']; ?>">
+								<?php echo htmlspecialchars($address['line1'] . ', ' . $address['city'] . ', ' . $address['country']); ?>
+							</option>
+						<?php endwhile; ?>
+					</select>
+				</div>
+				<p class="muted">Need another address? Add it from <a href="profile.php">Profile</a>.</p>
+				<button type="submit" name="place_order" class="btn-hero" <?php echo empty($user['phone']) ? 'disabled' : ''; ?>>Place Order</button>
+			</form>
+		</section>
 
-                        <?php echo $order_items_html; ?>
-
-                        <button type="submit" name="place_order" class="btn-hero">Place Order</button>
-                    </form>
-                <?php endif; ?>
-            </section>
-        </div>
-
-        <aside class="checkout-summary">
-            <h3>Order Summary</h3>
-            <div class="summary-row"><span>Subtotal</span><span>৳<?php echo number_format($subtotal, 2); ?></span></div>
-            <div class="summary-row"><span>Shipping</span><span><?php echo $shipping_fee === 0 ? 'Free' : '৳' . number_format($shipping_fee, 2); ?></span></div>
-            <div class="summary-row total"><span>Total</span><span>৳<?php echo number_format($total, 2); ?></span></div>
-        </aside>
-    </div>
-
+		<section class="checkout-card">
+			<h2>Order Summary</h2>
+			<?php foreach ($cart_rows as $item): ?>
+				<p class="checkout-line">
+					<span><?php echo htmlspecialchars($item['name']); ?> × <?php echo $item['quantity']; ?></span>
+					<strong>৳<?php echo number_format($item['line_total'], 2); ?></strong>
+				</p>
+			<?php endforeach; ?>
+			<p class="checkout-total"><span>Total</span><strong>৳<?php echo number_format($subtotal, 2); ?></strong></p>
+		</section>
+	</div>
 <?php endif; ?>
 
 <?php include 'includes/footer.php'; ?>
