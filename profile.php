@@ -7,20 +7,31 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if ($_SESSION['role'] !== 'customer') {
+    $destination = $_SESSION['role'] === 'admin' ? 'admin/dashboard.php' : 'seller/manage_products.php';
+    header("Location: $destination");
+    exit();
+}
+
 $user_id = intval($_SESSION['user_id']);
 $message = '';
 
 // Update personal info
 if (isset($_POST['update_profile'])) {
     $full_name = trim($_POST['full_name']);
-    $email = trim($_POST['email']);
+    $email_local = trim($_POST['email_local'] ?? '');
+    $email = $email_local . '@gmail.com';
     $phone = trim($_POST['phone']);
 
-    $stmt = $conn->prepare("UPDATE users SET full_name = ?, email = ?, phone = ? WHERE user_id = ?");
-    $stmt->bind_param("sssi", $full_name, $email, $phone, $user_id);
-    $stmt->execute();
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/@gmail\.com$/i', $email)) {
+        $message = "Seller and customer accounts must use a valid @gmail.com email address.";
+    } else {
+        $stmt = $conn->prepare("UPDATE users SET full_name = ?, email = ?, phone = ? WHERE user_id = ?");
+        $stmt->bind_param("sssi", $full_name, $email, $phone, $user_id);
+        $stmt->execute();
 
-    $message = "Profile updated.";
+        $message = "Profile updated.";
+    }
 }
 
 // Add new address
@@ -136,8 +147,11 @@ if (isset($_GET['edit_address'])) {
                 <input type="text" id="full_name" name="full_name" value="<?php echo htmlspecialchars($user['full_name'] ?? ''); ?>">
             </div>
             <div class="filter-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($user['email'] ?? ''); ?>">
+                <label for="email_local">Gmail Address</label>
+                <div class="email-input">
+                    <input type="text" id="email_local" name="email_local" pattern="[A-Za-z0-9._%+-]+" title="Enter the part before @gmail.com" value="<?php echo htmlspecialchars(preg_replace('/@gmail\.com$/i', '', $user['email'] ?? '')); ?>" required>
+                    <span>@gmail.com</span>
+                </div>
             </div>
             <div class="filter-group">
                 <label for="phone">Phone</label>
