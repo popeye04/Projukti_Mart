@@ -34,7 +34,7 @@ $summary_sql = "SELECT COALESCE(SUM(oi.quantity), 0) AS units_sold,
                  FROM order_items oi
                  JOIN products p ON oi.product_id = p.product_id
                  JOIN orders o ON oi.order_id = o.order_id
-                 WHERE p.seller_id = ? AND o.status != 'cancelled' AND $date_condition";
+                 WHERE p.seller_id = ? AND o.status = 'delivered' AND $date_condition";
 $summary_stmt = $conn->prepare($summary_sql);
 $summary_stmt->bind_param("i", $seller_id);
 $summary_stmt->execute();
@@ -44,7 +44,7 @@ $breakdown_sql = "SELECT p.name, SUM(oi.quantity) AS units_sold, SUM(oi.subtotal
                    FROM order_items oi
                    JOIN products p ON oi.product_id = p.product_id
                    JOIN orders o ON oi.order_id = o.order_id
-                   WHERE p.seller_id = ? AND o.status != 'cancelled' AND $date_condition
+                   WHERE p.seller_id = ? AND o.status = 'delivered' AND $date_condition
                    GROUP BY p.product_id, p.name
                    ORDER BY revenue DESC";
 $breakdown_stmt = $conn->prepare($breakdown_sql);
