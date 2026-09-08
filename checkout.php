@@ -45,9 +45,6 @@ $addresses_stmt->bind_param("i", $user_id);
 $addresses_stmt->execute();
 $addresses = $addresses_stmt->get_result();
 
-$shipping_fee = ($subtotal >= 5000) ? 0 : 60;
-$total = $subtotal + $shipping_fee;
-
 if (isset($_POST['place_order'])) {
 	$address_id = intval($_POST['address_id'] ?? 0);
 
@@ -77,7 +74,7 @@ if (isset($_POST['place_order'])) {
 				$order_stmt = $conn->prepare(
 					"INSERT INTO orders (user_id, address_id, status, total_amount) VALUES (?, ?, 'pending', ?)"
 				);
-				$order_stmt->bind_param("iid", $user_id, $address_id, $total);
+				$order_stmt->bind_param("iid", $user_id, $address_id, $subtotal);
 				if (!$order_stmt->execute()) {
 					throw new Exception("Could not create the order.");
 				}
@@ -109,94 +106,56 @@ if (isset($_POST['place_order'])) {
 
 $page_title = 'Checkout';
 include 'includes/header.php';
-
-// Build the order-items table once, reused whether or not an address exists
-ob_start();
 ?>
-<h2>Order Items</h2>
-<table class="cart-table">
-	<thead>
-		<tr><th>Product</th><th>Qty</th><th>Price</th><th>Subtotal</th></tr>
-	</thead>
-	<tbody>
-		<?php foreach ($cart_rows as $row): ?>
-		<tr>
-			<td><?php echo htmlspecialchars($row['name']); ?></td>
-			<td><?php echo $row['quantity']; ?></td>
-			<td>৳<?php echo number_format($row['price'], 2); ?></td>
-			<td>৳<?php echo number_format($row['line_total'], 2); ?></td>
-		</tr>
-		<?php endforeach; ?>
-	</tbody>
-</table>
-<?php
-$order_items_html = ob_get_clean();
-?>
-
-<div class="page-heading">
-	<p class="page-eyebrow">Make it yours</p>
-	<h1>Checkout</h1>
-	<p class="page-intro">Good technology. Delivered to your door.</p>
-</div>
 
 <?php if ($order_placed): ?>
-	<div class="order-confirmation">
-		<h2>Order Placed!</h2>
-		<p>Thanks for your order — <strong>Order #<?php echo $placed_order_id; ?></strong> has been placed successfully.</p>
-		<p>Order total: <strong>৳<?php echo number_format($total, 2); ?></strong></p>
-		<a href="orders.php" class="btn-hero">View My Orders</a>
-	</div>
+	<h1>Order Placed</h1>
+	<p class="cart-message">Order #<?php echo $placed_order_id; ?> is pending admin approval. You will receive an update in My Orders.</p>
+	<a class="btn-hero" href="orders.php">View My Orders</a>
 <?php elseif (empty($cart_rows)): ?>
+	<h1>Checkout</h1>
 	<p class="empty-state">Your cart is empty. <a href="index.php">Continue shopping</a>.</p>
 <?php else: ?>
-
-	<ol class="checkout-steps" aria-label="Checkout progress">
-		<li><span>01</span> Cart</li>
-		<li aria-current="step"><span>02</span> Address &amp; review</li>
-		<li><span>03</span> Confirmation</li>
-	</ol>
-
+	<h1>Checkout</h1>
 	<?php if ($error): ?><p class="stock-warning-box"><?php echo htmlspecialchars($error); ?></p><?php endif; ?>
 
 	<div class="checkout-layout">
-		<div class="checkout-main">
-			<section class="checkout-section">
-				<form method="POST">
-					<h2>Shipping Details</h2>
-					<div class="filter-group">
-						<label>Phone Number</label>
-						<input type="text" value="<?php echo htmlspecialchars($user['phone'] ?? ''); ?>" readonly>
-						<?php if (empty($user['phone'])): ?><p class="muted">Add your phone number in <a href="profile.php">Profile</a>.</p><?php endif; ?>
-					</div>
+		<section class="checkout-card">
+			<h2>Shipping Details</h2>
+			<div class="filter-group">
+				<label>Phone Number</label>
+				<input type="text" value="<?php echo htmlspecialchars($user['phone'] ?? ''); ?>" readonly>
+				<?php if (empty($user['phone'])): ?><p class="muted">Add your phone number in <a href="profile.php">Profile</a>.</p><?php endif; ?>
+			</div>
 
-					<h2>Shipping Address</h2>
-					<div class="address-options">
-						<?php if ($addresses->num_rows > 0): ?>
-							<?php while ($address = $addresses->fetch_assoc()): ?>
-								<label class="address-option"><input type="radio" name="address_id" value="<?php echo (int) $address['address_id']; ?>" required>
-								<span><?php echo htmlspecialchars($address['line1']); ?><?php echo $address['line2'] ? ', ' . htmlspecialchars($address['line2']) : ''; ?><br><?php echo htmlspecialchars($address['city']); ?>, <?php echo htmlspecialchars($address['country']); ?></span></label>
-							<?php endwhile; ?>
-						<?php else: ?>
-							<p class="muted">No saved addresses. Please add an address in <a href="profile.php">Profile</a>.</p>
-						<?php endif; ?>
-					</div>
-					<p class="muted">Need another address? Add it from <a href="profile.php">Profile</a>.</p>
+			<form method="POST">
+				<div class="filter-group">
+					<label for="address_id">Shipping Address</label>
+					<select name="address_id" id="address_id" required>
+						<option value="">Select an address</option>
+						<?php while ($address = $addresses->fetch_assoc()): ?>
+							<option value="<?php echo $address['address_id']; ?>">
+								<?php echo htmlspecialchars($address['line1'] . ', ' . $address['city'] . ', ' . $address['country']); ?>
+							</option>
+						<?php endwhile; ?>
+					</select>
+				</div>
+				<p class="muted">Need another address? Add it from <a href="profile.php">Profile</a>.</p>
+				<button type="submit" name="place_order" class="btn-hero" <?php echo empty($user['phone']) ? 'disabled' : ''; ?>>Place Order</button>
+			</form>
+		</section>
 
-					<?= $order_items_html ?>
-
-					<button type="submit" name="place_order" class="btn-hero" <?php echo (empty($user['phone']) || empty($cart_rows)) ? 'disabled' : ''; ?>>Place Order</button>
-				</form>
-			</section>
-		</div>
-
-		<aside class="checkout-summary">
-			<h3>Order Summary</h3>
-			<div class="summary-row"><span>Subtotal</span><span>৳<?php echo number_format($subtotal, 2); ?></span></div>
-			<div class="summary-row"><span>Shipping</span><span><?php echo $shipping_fee === 0 ? 'Free' : '৳' . number_format($shipping_fee, 2); ?></span></div>
-			<div class="summary-row total"><span>Total</span><span>৳<?php echo number_format($total, 2); ?></span></div>
-		</aside>
+		<section class="checkout-card">
+			<h2>Order Summary</h2>
+			<?php foreach ($cart_rows as $item): ?>
+				<p class="checkout-line">
+					<span><?php echo htmlspecialchars($item['name']); ?> × <?php echo $item['quantity']; ?></span>
+					<strong>৳<?php echo number_format($item['line_total'], 2); ?></strong>
+				</p>
+			<?php endforeach; ?>
+			<p class="checkout-total"><span>Total</span><strong>৳<?php echo number_format($subtotal, 2); ?></strong></p>
+		</section>
 	</div>
-
 <?php endif; ?>
 
 <?php include 'includes/footer.php'; ?>
