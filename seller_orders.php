@@ -21,19 +21,55 @@ if (isset($_POST['update_status'])) {
     // Confirm this seller actually has at least one item in this order
     // before letting them touch its status (NFR-06)
     $own_check = $conn->prepare(
-        "SELECT COUNT(*) AS cnt FROM order_items oi
+        "SELECT COUNT(*) AS cnt, o.status
+         FROM order_items oi
          JOIN products p ON oi.product_id = p.product_id
+         JOIN orders o ON oi.order_id = o.order_id
          WHERE oi.order_id = ? AND p.seller_id = ?"
     );
     $own_check->bind_param("ii", $order_id, $seller_id);
     $own_check->execute();
-    $owns_item = $own_check->get_result()->fetch_assoc()['cnt'] > 0;
+    $order_access = $own_check->get_result()->fetch_assoc();
+    $owns_item = $order_access && $order_access['cnt'] > 0;
+    $is_approved = $order_access && $order_access['status'] !== 'pending';
 
-    if ($owns_item && in_array($new_status, $allowed_statuses)) {
-        $update_stmt = $conn->prepare("UPDATE orders SET status = ? WHERE order_id = ?");
-        $update_stmt->bind_param("si", $new_status, $order_id);
-        $update_stmt->execute();
-        $message = "Order #$order_id status updated to " . ucfirst($new_status) . ".";
+    if ($owns_item && $is_approved && in_array($new_status, $allowed_statuses)) {
+        $stock_error = false;
+        if ($new_status === 'delivered' && $order_access['status'] !== 'delivered') {
+            $conn->begin_transaction();
+            $items_stmt = $conn->prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?");
+            $items_stmt->bind_param("i", $order_id);
+            $items_stmt->execute();
+            $items_result = $items_stmt->get_result();
+
+            while ($item = $items_result->fetch_assoc()) {
+                $stock_stmt = $conn->prepare(
+                    "UPDATE products SET stock_qty = stock_qty - ? WHERE product_id = ? AND stock_qty >= ?"
+                );
+                $stock_stmt->bind_param("iii", $item['quantity'], $item['product_id'], $item['quantity']);
+                $stock_stmt->execute();
+                if ($stock_stmt->affected_rows !== 1) {
+                    $stock_error = true;
+                    break;
+                }
+            }
+
+            if ($stock_error) {
+                $conn->rollback();
+                $message = "Order #$order_id cannot be marked delivered because an item is out of stock.";
+            } else {
+                $update_stmt = $conn->prepare("UPDATE orders SET status = ? WHERE order_id = ?");
+                $update_stmt->bind_param("si", $new_status, $order_id);
+                $update_stmt->execute();
+                $conn->commit();
+                $message = "Order #$order_id status updated to Delivered.";
+            }
+        } else {
+            $update_stmt = $conn->prepare("UPDATE orders SET status = ? WHERE order_id = ?");
+            $update_stmt->bind_param("si", $new_status, $order_id);
+            $update_stmt->execute();
+            $message = "Order #$order_id status updated to " . ucfirst($new_status) . ".";
+        }
     } else {
         $message = "Unable to update that order.";
     }
