@@ -7,8 +7,22 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+if ($_SESSION['role'] !== 'customer') {
+    $destination = $_SESSION['role'] === 'admin' ? 'admin/dashboard.php' : 'seller/manage_products.php';
+    header("Location: $destination");
+    exit();
+}
+
 $user_id = intval($_SESSION['user_id']);
 $message = '';
+
+$notifications_stmt = $conn->prepare(
+    "SELECT message, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
+);
+$notifications_stmt->bind_param("i", $user_id);
+$notifications_stmt->execute();
+$notifications = $notifications_stmt->get_result();
+$conn->query("UPDATE notifications SET is_read = 1 WHERE user_id = " . $user_id);
 
 // Handle order cancellation (only allowed while status = 'pending')
 if (isset($_POST['cancel_order'])) {
@@ -20,25 +34,10 @@ if (isset($_POST['cancel_order'])) {
     $order_check = $check_stmt->get_result()->fetch_assoc();
 
     if ($order_check && $order_check['status'] === 'pending') {
-        $conn->begin_transaction();
-
-        // Restore stock for every item in this cancelled order
-        $items_stmt = $conn->prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?");
-        $items_stmt->bind_param("i", $order_id);
-        $items_stmt->execute();
-        $items_result = $items_stmt->get_result();
-
-        while ($item = $items_result->fetch_assoc()) {
-            $restock_stmt = $conn->prepare("UPDATE products SET stock_qty = stock_qty + ? WHERE product_id = ?");
-            $restock_stmt->bind_param("ii", $item['quantity'], $item['product_id']);
-            $restock_stmt->execute();
-        }
-
         $cancel_stmt = $conn->prepare("UPDATE orders SET status = 'cancelled' WHERE order_id = ?");
         $cancel_stmt->bind_param("i", $order_id);
         $cancel_stmt->execute();
 
-        $conn->commit();
         $message = "Order #$order_id has been cancelled.";
     } else {
         $message = "This order can no longer be cancelled.";
@@ -64,6 +63,18 @@ $orders = $orders_stmt->get_result();
 <h1>My Orders</h1>
 
 <?php if ($message): ?><p class="cart-message"><?php echo htmlspecialchars($message); ?></p><?php endif; ?>
+
+<?php if ($notifications->num_rows > 0): ?>
+<section class="order-notifications">
+    <h2>Order Updates</h2>
+    <?php while ($notification = $notifications->fetch_assoc()): ?>
+        <p class="cart-message">
+            <?php echo htmlspecialchars($notification['message']); ?>
+            <span class="muted"><?php echo date('M j, Y g:i A', strtotime($notification['created_at'])); ?></span>
+        </p>
+    <?php endwhile; ?>
+</section>
+<?php endif; ?>
 
 <?php if ($orders->num_rows === 0): ?>
     <p class="empty-state">You haven't placed any orders yet. <a href="index.php">Start shopping</a>.</p>
