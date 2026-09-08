@@ -35,49 +35,79 @@
     <p class="footer-note">&copy; <?php echo date('Y'); ?> Projukti Mart — CSE327 demo project.</p>
 </footer>
 
-<!-- Visibility listeners stay here; chatbot.js owns only message submission. -->
-<button id="chatbotToggle" class="chatbot-toggle" aria-label="Open chat assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-10a9 9 0 0 1 18 0Z"/><path d="m12 6 1.2 3.3 3.3 1.2-3.3 1.2L12 15l-1.2-3.3-3.3-1.2 3.3-1.2L12 6Z"/></svg><span>Ask Projukti</span></button>
+<button id="chatbotToggle" class="chatbot-toggle" aria-label="Open chat assistant">💬</button>
 
 <div id="chatbotPanel" class="chatbot-panel" hidden>
     <div class="chatbot-header">
-        <div class="chatbot-heading"><span>Projukti Assistant</span><small class="chatbot-online">Your next upgrade starts here</small></div>
+        <span>Ask Projukti Assistant</span>
         <button id="chatbotClose" aria-label="Close chat">&times;</button>
     </div>
-    <div class="chatbot-messages" id="chatbotMessages" role="log" aria-live="polite" aria-label="Assistant messages">
-        <p class="bot-msg">Hi! Tell me what you're looking for — e.g. "a lightweight laptop for coding under 70k".</p>
+    <div class="chatbot-messages">
+        <p class="bot-msg">Hi! I know the Projukti Mart project structure and catalog. Ask about categories, products, checkout, sellers, admin, or database tables.</p>
     </div>
     <form class="chatbot-input" id="chatbotForm">
-        <input id="chatbotInput" type="text" name="message" maxlength="255" aria-label="Ask the assistant" placeholder="Type your question..." autocomplete="off" dir="auto" required>
-        <button id="chatbotMic" type="button" aria-label="Start voice input" aria-pressed="false" title="Speak your message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1m-7 8v4m-4 0h8"/></svg></button>
-        <button id="chatbotSend" type="submit">Send</button>
+        <input type="text" id="chatbotInput" name="message" placeholder="Type your question..." autocomplete="off" required>
+        <button type="submit">Send</button>
     </form>
-    <div class="chatbot-input chatbot-voice">
-        <label for="chatbotVoiceLanguage">Voice language</label>
-        <select id="chatbotVoiceLanguage" aria-label="Voice recognition language">
-            <option value="bn-BD">বাংলা</option>
-            <option value="en-US">English</option>
-        </select>
-    </div>
-    <p id="chatbotVoiceStatus" class="muted" role="status" aria-live="polite"></p>
 </div>
 
 <script>
     const chatbotToggle = document.getElementById('chatbotToggle');
     const chatbotPanel = document.getElementById('chatbotPanel');
     const chatbotClose = document.getElementById('chatbotClose');
+    const chatbotForm = document.getElementById('chatbotForm');
+    const chatbotInput = document.getElementById('chatbotInput');
+    const chatbotMessages = document.querySelector('.chatbot-messages');
+
+    function addBotMessage(text) {
+        const p = document.createElement('p');
+        p.className = 'bot-msg';
+        p.textContent = text;
+        chatbotMessages.appendChild(p);
+        chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+    }
 
     chatbotToggle.addEventListener('click', () => {
         chatbotPanel.hidden = false;
         chatbotToggle.hidden = true;
-        document.getElementById('chatbotInput').focus();
+        chatbotInput.focus();
     });
+
     chatbotClose.addEventListener('click', () => {
         chatbotPanel.hidden = true;
         chatbotToggle.hidden = false;
-        chatbotToggle.focus();
+    });
+
+    chatbotForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const message = chatbotInput.value.trim();
+        if (!message) {
+            return;
+        }
+
+        const userMsg = document.createElement('p');
+        userMsg.className = 'user-msg';
+        userMsg.textContent = message;
+        chatbotMessages.appendChild(userMsg);
+
+        chatbotInput.value = '';
+
+        try {
+            const response = await fetch('/projukti_mart/ai_search.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+                },
+                body: 'message=' + encodeURIComponent(message)
+            });
+
+            const data = await response.json();
+            addBotMessage(data.answer || 'I could not answer that question yet.');
+        } catch (error) {
+            addBotMessage('The assistant could not reach the project knowledge endpoint.');
+        }
     });
 </script>
-<script src="/projukti_mart/assets/js/chatbot.js" defer></script>
 
 </body>
 </html>
